@@ -186,19 +186,39 @@
 
 {{ $imageDir := "static/glasses-selection-2026" }}
 {{ $images := slice }}
+{{ $extPriority := slice ".webp" ".jpg" ".jpeg" ".png" ".heic" ".gif" }}
 {{ with (readDir $imageDir) }}
   {{ range . }}
     {{ if .IsDir }}
       {{ $glassesName := .Name }}
       {{ $subPath := printf "%s/%s" $imageDir $glassesName }}
+      {{ $candidates := slice }}
       {{ with (readDir $subPath) }}
         {{ range . }}
           {{ if not .IsDir }}
             {{ if strings.HasPrefix (lower .Name) "bald." }}
-              {{ $images = $images | append (dict "name" $glassesName "path" (printf "/glasses-selection-2026/%s/%s" $glassesName .Name)) }}
+              {{ $candidates = $candidates | append .Name }}
             {{ end }}
           {{ end }}
         {{ end }}
+      {{ end }}
+      {{/* Prefer .webp over the original format when both are present. */}}
+      {{ $chosen := "" }}
+      {{ range $extPriority }}
+        {{ $ext := . }}
+        {{ if eq $chosen "" }}
+          {{ range $candidates }}
+            {{ if and (eq $chosen "") (strings.HasSuffix (lower .) $ext) }}
+              {{ $chosen = . }}
+            {{ end }}
+          {{ end }}
+        {{ end }}
+      {{ end }}
+      {{ if and (eq $chosen "") (gt (len $candidates) 0) }}
+        {{ $chosen = index $candidates 0 }}
+      {{ end }}
+      {{ if ne $chosen "" }}
+        {{ $images = $images | append (dict "name" $glassesName "path" (printf "/glasses-selection-2026/%s/%s" $glassesName $chosen)) }}
       {{ end }}
     {{ end }}
   {{ end }}
@@ -344,6 +364,35 @@
     screen.appendChild(restartBtn);
   }
 
+  // Preloads one image; resolves on success OR failure so a single broken
+  // photo can't block the whole flow forever.
+  function preloadImage(path) {
+    return new Promise(function (resolve) {
+      var img = new Image();
+      img.onload = resolve;
+      img.onerror = resolve;
+      img.src = path;
+    });
+  }
+
+  // Loads one at a time rather than in parallel -- over a single HTTP/2
+  // connection with limited bandwidth, firing them all at once doesn't get
+  // them here any faster, it just makes every image trickle in together.
+  function preloadAll(items, onProgress) {
+    var loaded = 0;
+    var total = items.length;
+    onProgress(loaded, total);
+    function next(i) {
+      if (i >= items.length) return Promise.resolve();
+      return preloadImage(items[i].path).then(function () {
+        loaded++;
+        onProgress(loaded, total);
+        return next(i + 1);
+      });
+    }
+    return next(0);
+  }
+
   function showStart() {
     clear();
     var screen = el("div", { class: "screen" });
@@ -355,16 +404,25 @@
       app.appendChild(screen);
       return;
     }
-    var k = Math.min(3, images.length);
-    screen.appendChild(el("p", {
-      class: "sub",
-      text: "You'll see two pairs of glasses at a time — just click the one you like better. " +
-            "We'll work out your top " + k + " from your picks (" + images.length + " photos)."
-    }));
-    var startBtn = el("button", { text: "Start" });
-    startBtn.addEventListener("click", startComparisons);
-    screen.appendChild(startBtn);
+
+    var loadingText = el("p", { class: "sub", text: "Loading photos… 0 / " + images.length });
+    screen.appendChild(loadingText);
     app.appendChild(screen);
+
+    preloadAll(images, function (loaded, total) {
+      loadingText.textContent = "Loading photos… " + loaded + " / " + total;
+    }).then(function () {
+      screen.innerHTML = "";
+      var k = Math.min(3, images.length);
+      screen.appendChild(el("p", {
+        class: "sub",
+        text: "You'll see two pairs of glasses at a time — just click the one you like better. " +
+              "We'll work out your top " + k + " from your picks (" + images.length + " photos)."
+      }));
+      var startBtn = el("button", { text: "Start" });
+      startBtn.addEventListener("click", startComparisons);
+      screen.appendChild(startBtn);
+    });
   }
 
   var doneCount = 0;
