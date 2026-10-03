@@ -59,6 +59,30 @@
     color: var(--accent);
     border: 1px solid var(--accent);
   }
+  button.restart-btn {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 10;
+    padding: 12px 21px;
+    font-size: 1.275rem;
+    background: rgba(234, 179, 8, 0.2);
+    color: #8a5d00;
+    border: 1px solid rgba(217, 119, 6, 0.6);
+  }
+  button.restart-btn:hover {
+    background: rgba(234, 179, 8, 0.35);
+  }
+  @media (prefers-color-scheme: dark) {
+    button.restart-btn {
+      color: #fde68a;
+      background: rgba(234, 179, 8, 0.15);
+      border-color: rgba(250, 204, 21, 0.5);
+    }
+    button.restart-btn:hover {
+      background: rgba(234, 179, 8, 0.28);
+    }
+  }
 
   .progress { color: var(--muted); margin-bottom: 16px; font-size: 0.9rem; }
 
@@ -192,9 +216,9 @@
   // the script, or the chat instructions). Leave FORM_ACTION_URL empty to
   // just log results to the console instead of submitting anywhere.
   // ---------------------------------------------------------------------
-  var FORM_ACTION_URL = ""; // e.g. "https://docs.google.com/forms/d/e/XXXXXXX/formResponse"
-  var ENTRY_NAME = "";      // e.g. "entry.123456789" (the "your name" field)
-  var ENTRY_RANKING = "";   // e.g. "entry.987654321" (the "ranking" field)
+  var FORM_ACTION_URL = "https://docs.google.com/forms/d/e/1FAIpQLSfEenGyU0Twk-CrTmPrP8HhuYzgkBPzsgLh_M0zwE7pCAHTEQ/formResponse";
+  var ENTRY_NAME = "entry.3891833";
+  var ENTRY_RANKING = "entry.1182742884";
 
   var app = document.getElementById("app");
   var images = JSON.parse(app.getAttribute("data-images") || "[]");
@@ -220,59 +244,105 @@
     return a;
   }
 
-  // --- Async comparison-based top-K selection ----------------------------
+  // --- Async comparison-based top-3 via single-elimination bracket -------
   // compare(a, b) resolves to true if a is preferred over b.
-  // Finds the top K items in ranked order (best first) using one
-  // single-elimination pass per rank: round 1 finds #1 among all items,
-  // round 2 finds #2 among the (n-1) that didn't win round 1, etc. Items
-  // that drop out of contention are never compared again -- we only ever
-  // determine the order of the top K, not a full ranking.
-  function selectTopK(items, k, compare) {
-    var pool = items.slice();
-    var results = [];
-    var rounds = Math.min(k, pool.length);
+  //
+  // Finding #1 takes a plain knockout bracket: n-1 comparisons, since each
+  // match eliminates exactly one item. The trick for #2 and #3 is to reuse
+  // that bracket instead of re-scanning everyone again:
+  //   - The true #2 can only have lost to the champion (it would have beaten
+  //     anyone else), so #2 must be one of the handful of opponents the
+  //     champion played directly (that's ~log2(n) items, not n-1).
+  //   - The true #3 can only have lost to the champion or to #2, so its
+  //     candidates are the champion's other direct-beaten opponents plus
+  //     whoever #2 itself beat directly before meeting the champion.
+  // Each node tracks who it has personally beaten so this information is
+  // available later without asking the user to re-compare anything.
+  function makeNode(item) { return { item: item, beaten: [] }; }
 
-    function doRound(roundIndex) {
-      if (roundIndex >= rounds) return Promise.resolve(results);
-      var champion = pool[0];
-      var rest = [];
-      var i = 1;
+  function playMatch(nodeA, nodeB, compare) {
+    return compare(nodeA.item, nodeB.item).then(function (aWins) {
+      var winner = aWins ? nodeA : nodeB;
+      var loser = aWins ? nodeB : nodeA;
+      winner.beaten.push({ item: loser.item, theirBeaten: loser.beaten });
+      return winner;
+    });
+  }
+
+  function runBracket(nodes, compare) {
+    function round(current) {
+      if (current.length <= 1) return Promise.resolve(current[0]);
+      var next = [];
+      var i = 0;
       function step() {
-        if (i < pool.length) {
-          var challenger = pool[i];
-          i++;
-          return compare(champion, challenger).then(function (championWins) {
-            if (championWins) rest.push(challenger);
-            else { rest.push(champion); champion = challenger; }
+        if (i + 1 < current.length) {
+          var a = current[i], b = current[i + 1];
+          i += 2;
+          return playMatch(a, b, compare).then(function (winner) {
+            next.push(winner);
             return step();
           });
         }
-        results.push(champion);
-        pool = rest;
-        return doRound(roundIndex + 1);
+        if (i < current.length) { next.push(current[i]); i++; } // odd one out: a bye
+        return round(next);
       }
       return step();
     }
-
-    return doRound(0);
+    return round(nodes);
   }
 
-  function estimateComparisons(n, k) {
-    var rounds = Math.min(k, n);
-    var total = 0;
-    var poolSize = n;
-    for (var r = 0; r < rounds; r++) {
-      total += Math.max(0, poolSize - 1);
-      poolSize -= 1;
+  // Finds the best item among {item, theirBeaten} entries; returns the winning entry.
+  function pickBestEntry(entries, compare) {
+    if (entries.length === 0) return Promise.resolve(null);
+    var current = entries[0];
+    var idx = 1;
+    function step() {
+      if (idx < entries.length) {
+        var challenger = entries[idx];
+        idx++;
+        return compare(current.item, challenger.item).then(function (currentWins) {
+          if (!currentWins) current = challenger;
+          return step();
+        });
+      }
+      return Promise.resolve(current);
     }
-    return Math.max(1, total);
+    return step();
   }
 
-  var TOP_K = 3;
+  function findTop3(items, compare, onStage) {
+    var nodes = items.map(makeNode);
+    onStage("Finding your #1 pick");
+    return runBracket(nodes, compare).then(function (championNode) {
+      var result = [championNode.item];
+      var beatenEntries = championNode.beaten; // [{item, theirBeaten}]
+      if (beatenEntries.length === 0) return result; // only 1 item total
+
+      onStage("Finding your #2 pick");
+      return pickBestEntry(beatenEntries, compare).then(function (runnerUpEntry) {
+        result.push(runnerUpEntry.item);
+        var leftover = beatenEntries.filter(function (e) { return e !== runnerUpEntry; });
+        var thirdCandidates = leftover.concat(runnerUpEntry.theirBeaten);
+        if (thirdCandidates.length === 0) return result; // only 2 items total
+
+        onStage("Finding your #3 pick");
+        return pickBestEntry(thirdCandidates, compare).then(function (thirdEntry) {
+          result.push(thirdEntry.item);
+          return result;
+        });
+      });
+    });
+  }
 
   // --- Screens ----------------------------------------------------------
 
   function clear() { app.innerHTML = ""; }
+
+  function addRestartButton(screen) {
+    var restartBtn = el("button", { class: "secondary restart-btn", text: "Start over" });
+    restartBtn.addEventListener("click", showStart);
+    screen.appendChild(restartBtn);
+  }
 
   function showStart() {
     clear();
@@ -285,7 +355,7 @@
       app.appendChild(screen);
       return;
     }
-    var k = Math.min(TOP_K, images.length);
+    var k = Math.min(3, images.length);
     screen.appendChild(el("p", {
       class: "sub",
       text: "You'll see two pairs of glasses at a time — just click the one you like better. " +
@@ -297,17 +367,14 @@
     app.appendChild(screen);
   }
 
-  var totalEstimate = 0;
   var doneCount = 0;
+  var stageLabel = "";
 
   function startComparisons() {
     doneCount = 0;
-    var n = images.length;
-    var k = Math.min(TOP_K, n);
-    totalEstimate = estimateComparisons(n, k);
     var shuffled = shuffle(images);
 
-    selectTopK(shuffled, k, askUserToCompare).then(function (top) {
+    findTop3(shuffled, askUserToCompare, function (label) { stageLabel = label; }).then(function (top) {
       showResults(top);
     });
   }
@@ -318,7 +385,7 @@
       var screen = el("div", { class: "screen compare-screen" });
       screen.appendChild(el("div", {
         class: "progress",
-        text: "Comparison " + (doneCount + 1) + " (roughly " + totalEstimate + " total)"
+        text: stageLabel + " — comparison " + (doneCount + 1)
       }));
 
       var pair = el("div", { class: "pair" });
@@ -338,6 +405,7 @@
       pair.appendChild(makeChoice(b, false));
 
       screen.appendChild(pair);
+      addRestartButton(screen);
       app.appendChild(screen);
     });
   }
@@ -376,6 +444,7 @@
         var done = el("div", { class: "screen" });
         done.appendChild(el("h2", { text: "Thanks!" }));
         done.appendChild(el("p", { class: "sub", text: "Your ranking has been submitted." }));
+        addRestartButton(done);
         app.appendChild(done);
       }).catch(function (err) {
         status.textContent = "Something went wrong submitting: " + err;
@@ -385,10 +454,7 @@
     screen.appendChild(submitBtn);
     screen.appendChild(status);
 
-    var redoBtn = el("button", { class: "secondary", text: "Start over" });
-    redoBtn.style.marginTop = "12px";
-    redoBtn.addEventListener("click", showStart);
-    screen.appendChild(redoBtn);
+    addRestartButton(screen);
 
     app.appendChild(screen);
   }
