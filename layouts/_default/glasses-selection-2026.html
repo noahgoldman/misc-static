@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ .Title }}</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f7f7f8;
+    --card: #ffffff;
+    --text: #1a1a1a;
+    --muted: #666;
+    --accent: #2b6cb0;
+    --accent-hover: #1f518a;
+    --border: #e2e2e2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17181a;
+      --card: #232427;
+      --text: #f0f0f0;
+      --muted: #a0a0a0;
+      --accent: #5b9bd5;
+      --accent-hover: #7bb0e0;
+      --border: #3a3b3e;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 24px 16px 64px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  h1 { font-size: 1.5rem; margin: 0 0 8px; text-align: center; }
+  p.sub { color: var(--muted); text-align: center; max-width: 480px; margin: 0 0 24px; }
+  .screen { width: 100%; max-width: 900px; display: flex; flex-direction: column; align-items: center; }
+  .screen.compare-screen { max-width: 1600px; }
+  .hidden { display: none !important; }
+
+  button {
+    font: inherit;
+    cursor: pointer;
+    border: none;
+    border-radius: 8px;
+    background: var(--accent);
+    color: #fff;
+    padding: 12px 20px;
+    font-size: 1rem;
+  }
+  button:hover { background: var(--accent-hover); }
+  button.secondary {
+    background: transparent;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+  }
+
+  .progress { color: var(--muted); margin-bottom: 16px; font-size: 0.9rem; }
+
+  .pair {
+    display: flex;
+    gap: 16px;
+    width: 100%;
+    justify-content: center;
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .choice {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px;
+    flex: 1 1 280px;
+    max-width: 780px;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+    transition: transform 0.08s ease, border-color 0.08s ease;
+  }
+  @media (min-width: 640px) {
+    .pair { flex-wrap: nowrap; }
+  }
+  .choice:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .choice img {
+    max-width: 100%;
+    max-height: min(75vh, 900px);
+    width: auto;
+    height: auto;
+    object-fit: contain;
+    border-radius: 8px;
+    display: block;
+  }
+  .vs {
+    align-self: center;
+    color: var(--muted);
+    font-weight: 600;
+    font-size: 1.1rem;
+    margin: auto 4px;
+  }
+
+  .results-list {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 24px;
+    width: 100%;
+    max-width: 480px;
+  }
+  .results-list li {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 14px;
+    margin-bottom: 8px;
+  }
+  .results-list .rank {
+    font-weight: 700;
+    color: var(--accent);
+    width: 1.5em;
+    text-align: right;
+  }
+  .results-list img {
+    width: 56px;
+    height: 56px;
+    object-fit: cover;
+    border-radius: 6px;
+  }
+  .results-list .name { color: var(--text); word-break: break-all; font-size: 0.9rem; }
+
+  label.name-label {
+    width: 100%;
+    max-width: 480px;
+    margin-bottom: 16px;
+  }
+  label.name-label span { display: block; margin-bottom: 6px; color: var(--muted); font-size: 0.9rem; }
+  input[type="text"] {
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--text);
+    font: inherit;
+  }
+
+  .error { color: #c0392b; text-align: center; }
+</style>
+</head>
+<body>
+
+<h1>{{ .Title }}</h1>
+
+{{ $imageDir := "static/glasses-selection-2026" }}
+{{ $images := slice }}
+{{ with (readDir $imageDir) }}
+  {{ range . }}
+    {{ if .IsDir }}
+      {{ $glassesName := .Name }}
+      {{ $subPath := printf "%s/%s" $imageDir $glassesName }}
+      {{ with (readDir $subPath) }}
+        {{ range . }}
+          {{ if not .IsDir }}
+            {{ if strings.HasPrefix (lower .Name) "bald." }}
+              {{ $images = $images | append (dict "name" $glassesName "path" (printf "/glasses-selection-2026/%s/%s" $glassesName .Name)) }}
+            {{ end }}
+          {{ end }}
+        {{ end }}
+      {{ end }}
+    {{ end }}
+  {{ end }}
+{{ end }}
+
+<div id="app" data-images="{{ $images | jsonify }}"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---------------------------------------------------------------------
+  // Google Form submission config.
+  // Fill these in once you've created the form (see README section below
+  // the script, or the chat instructions). Leave FORM_ACTION_URL empty to
+  // just log results to the console instead of submitting anywhere.
+  // ---------------------------------------------------------------------
+  var FORM_ACTION_URL = ""; // e.g. "https://docs.google.com/forms/d/e/XXXXXXX/formResponse"
+  var ENTRY_NAME = "";      // e.g. "entry.123456789" (the "your name" field)
+  var ENTRY_RANKING = "";   // e.g. "entry.987654321" (the "ranking" field)
+
+  var app = document.getElementById("app");
+  var images = JSON.parse(app.getAttribute("data-images") || "[]");
+
+  function el(tag, attrs, children) {
+    var e = document.createElement(tag);
+    attrs = attrs || {};
+    Object.keys(attrs).forEach(function (k) {
+      if (k === "class") e.className = attrs[k];
+      else if (k === "text") e.textContent = attrs[k];
+      else e.setAttribute(k, attrs[k]);
+    });
+    (children || []).forEach(function (c) { e.appendChild(c); });
+    return e;
+  }
+
+  function shuffle(arr) {
+    var a = arr.slice();
+    for (var i = a.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      var tmp = a[i]; a[i] = a[j]; a[j] = tmp;
+    }
+    return a;
+  }
+
+  // --- Async comparison-based top-K selection ----------------------------
+  // compare(a, b) resolves to true if a is preferred over b.
+  // Finds the top K items in ranked order (best first) using one
+  // single-elimination pass per rank: round 1 finds #1 among all items,
+  // round 2 finds #2 among the (n-1) that didn't win round 1, etc. Items
+  // that drop out of contention are never compared again -- we only ever
+  // determine the order of the top K, not a full ranking.
+  function selectTopK(items, k, compare) {
+    var pool = items.slice();
+    var results = [];
+    var rounds = Math.min(k, pool.length);
+
+    function doRound(roundIndex) {
+      if (roundIndex >= rounds) return Promise.resolve(results);
+      var champion = pool[0];
+      var rest = [];
+      var i = 1;
+      function step() {
+        if (i < pool.length) {
+          var challenger = pool[i];
+          i++;
+          return compare(champion, challenger).then(function (championWins) {
+            if (championWins) rest.push(challenger);
+            else { rest.push(champion); champion = challenger; }
+            return step();
+          });
+        }
+        results.push(champion);
+        pool = rest;
+        return doRound(roundIndex + 1);
+      }
+      return step();
+    }
+
+    return doRound(0);
+  }
+
+  function estimateComparisons(n, k) {
+    var rounds = Math.min(k, n);
+    var total = 0;
+    var poolSize = n;
+    for (var r = 0; r < rounds; r++) {
+      total += Math.max(0, poolSize - 1);
+      poolSize -= 1;
+    }
+    return Math.max(1, total);
+  }
+
+  var TOP_K = 3;
+
+  // --- Screens ----------------------------------------------------------
+
+  function clear() { app.innerHTML = ""; }
+
+  function showStart() {
+    clear();
+    var screen = el("div", { class: "screen" });
+    if (images.length < 2) {
+      screen.appendChild(el("p", {
+        class: "error",
+        text: "Need at least 2 pairs of glasses in static/glasses-selection-2026/ to run this. Found " + images.length + "."
+      }));
+      app.appendChild(screen);
+      return;
+    }
+    var k = Math.min(TOP_K, images.length);
+    screen.appendChild(el("p", {
+      class: "sub",
+      text: "You'll see two pairs of glasses at a time — just click the one you like better. " +
+            "We'll work out your top " + k + " from your picks (" + images.length + " photos)."
+    }));
+    var startBtn = el("button", { text: "Start" });
+    startBtn.addEventListener("click", startComparisons);
+    screen.appendChild(startBtn);
+    app.appendChild(screen);
+  }
+
+  var totalEstimate = 0;
+  var doneCount = 0;
+
+  function startComparisons() {
+    doneCount = 0;
+    var n = images.length;
+    var k = Math.min(TOP_K, n);
+    totalEstimate = estimateComparisons(n, k);
+    var shuffled = shuffle(images);
+
+    selectTopK(shuffled, k, askUserToCompare).then(function (top) {
+      showResults(top);
+    });
+  }
+
+  function askUserToCompare(a, b) {
+    return new Promise(function (resolve) {
+      clear();
+      var screen = el("div", { class: "screen compare-screen" });
+      screen.appendChild(el("div", {
+        class: "progress",
+        text: "Comparison " + (doneCount + 1) + " (roughly " + totalEstimate + " total)"
+      }));
+
+      var pair = el("div", { class: "pair" });
+
+      function makeChoice(item, isLeftChoice) {
+        var card = el("div", { class: "choice" });
+        card.appendChild(el("img", { src: item.path, alt: item.name }));
+        card.addEventListener("click", function () {
+          doneCount++;
+          resolve(isLeftChoice);
+        });
+        return card;
+      }
+
+      pair.appendChild(makeChoice(a, true));
+      pair.appendChild(el("div", { class: "vs", text: "vs" }));
+      pair.appendChild(makeChoice(b, false));
+
+      screen.appendChild(pair);
+      app.appendChild(screen);
+    });
+  }
+
+  // --- Results / submission ---------------------------------------------
+
+  function showResults(ranked) {
+    clear();
+    var screen = el("div", { class: "screen" });
+    screen.appendChild(el("h2", { text: "Your top " + ranked.length }));
+    screen.appendChild(el("p", { class: "sub", text: "#1 is your favorite. Add your name (optional) and submit." }));
+
+    var list = el("ul", { class: "results-list" });
+    ranked.forEach(function (item, idx) {
+      var li = el("li", {});
+      li.appendChild(el("span", { class: "rank", text: "#" + (idx + 1) }));
+      li.appendChild(el("img", { src: item.path, alt: "" }));
+      li.appendChild(el("span", { class: "name", text: item.name }));
+      list.appendChild(li);
+    });
+    screen.appendChild(list);
+
+    var nameLabel = el("label", { class: "name-label" });
+    nameLabel.appendChild(el("span", { text: "Your name (optional)" }));
+    var nameInput = el("input", { type: "text", placeholder: "e.g. Noah" });
+    nameLabel.appendChild(nameInput);
+    screen.appendChild(nameLabel);
+
+    var status = el("p", { class: "sub", text: "" });
+
+    var submitBtn = el("button", { text: "Submit my top " + ranked.length });
+    submitBtn.addEventListener("click", function () {
+      submitBtn.disabled = true;
+      submit(nameInput.value, ranked.map(function (item) { return item.name; })).then(function () {
+        clear();
+        var done = el("div", { class: "screen" });
+        done.appendChild(el("h2", { text: "Thanks!" }));
+        done.appendChild(el("p", { class: "sub", text: "Your ranking has been submitted." }));
+        app.appendChild(done);
+      }).catch(function (err) {
+        status.textContent = "Something went wrong submitting: " + err;
+        submitBtn.disabled = false;
+      });
+    });
+    screen.appendChild(submitBtn);
+    screen.appendChild(status);
+
+    var redoBtn = el("button", { class: "secondary", text: "Start over" });
+    redoBtn.style.marginTop = "12px";
+    redoBtn.addEventListener("click", showStart);
+    screen.appendChild(redoBtn);
+
+    app.appendChild(screen);
+  }
+
+  function submit(name, rankedNames) {
+    var rankingStr = rankedNames.map(function (n, i) { return (i + 1) + ". " + n; }).join("\n");
+
+    if (!FORM_ACTION_URL) {
+      console.log("[glasses] Google Form not configured. Would have submitted:", { name: name, ranking: rankingStr });
+      return Promise.resolve();
+    }
+
+    var body = new URLSearchParams();
+    if (ENTRY_NAME) body.append(ENTRY_NAME, name || "");
+    if (ENTRY_RANKING) body.append(ENTRY_RANKING, rankingStr);
+
+    // Google Forms doesn't send CORS headers, so this response is opaque.
+    // mode: "no-cors" lets the POST fire without the browser throwing on
+    // the (unreadable) response -- we just assume success if fetch doesn't reject.
+    return fetch(FORM_ACTION_URL, {
+      method: "POST",
+      mode: "no-cors",
+      body: body
+    });
+  }
+
+  showStart();
+})();
+</script>
+
+<!--
+  SETUP NOTES (not rendered as visible content beyond this comment):
+
+  1. For each pair of glasses, make a subdirectory under
+     static/glasses-selection-2026/ named after the glasses, containing a
+     photo named "bald.<ext>" (e.g. static/glasses-selection-2026/ray-ban-aviator/bald.jpg).
+     They're auto-detected on rebuild -- no manifest to maintain.
+
+  2. Create a Google Form with two fields:
+       - "Your name" (Short answer, not required)
+       - "Ranking" (Paragraph)
+
+  3. Get entry IDs: open the form, click the kebab menu (⋮) > "Get pre-filled link",
+     fill in sample answers, click "Get link", and copy it. The link will look like:
+       https://docs.google.com/forms/d/e/XXXX/viewform?entry.111=foo&entry.222=bar
+     Match which entry.NNN corresponds to which field by the sample values you typed.
+
+  4. In the <script> above, set:
+       FORM_ACTION_URL = the same link but with /viewform replaced by /formResponse
+                         (and drop everything after the base URL's path)
+       ENTRY_NAME      = "entry.111" (whichever matched your name field)
+       ENTRY_RANKING   = "entry.222" (whichever matched your ranking field)
+-->
+
+</body>
+</html>
